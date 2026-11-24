@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>音乐库 · 多模态音乐推荐</title>
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/assets/app.css">
+<style>[v-cloak]{display:none}</style>
+</head>
+<body>
+<div id="app" v-cloak>
+  <header class="topbar">
+    <div class="brand"><span class="brand-dot"></span>多模态音乐推荐</div>
+    <nav class="nav">
+      <a href="/">首页</a>
+      <a href="/library" class="active">音乐库</a>
+      <a href="/mine">我的</a>
+      <a href="/compare">权重对比</a>
+      <a v-if="isAdmin" href="/admin">后台</a>
+    </nav>
+    <div class="spacer"></div>
+    <span class="user-chip">{{ user.nickname }}</span>
+    <button class="btn small" @click="logout">退出</button>
+  </header>
+
+  <main class="page">
+    <div class="section-title">
+      音乐库
+      <span class="song-meta" style="font-weight:400;margin-left:6px">共 {{ total }} 首</span>
+    </div>
+
+    <div class="card">
+      <div class="row">
+        <input v-model="keyword" placeholder="按歌名或歌手搜索" style="flex:1 1 220px"
+               @keydown.enter="search(1)">
+        <select v-model="genre" style="flex:0 1 160px">
+          <option value="">全部风格</option>
+          <option v-for="g in genres" :key="g.tag" :value="g.tag">{{ g.tag }}（{{ g.count }}）</option>
+        </select>
+        <button class="btn primary" @click="search(1)">搜索</button>
+        <button class="btn" @click="reset">重置</button>
+      </div>
+      <div v-if="err" class="notice" style="margin-top:12px">{{ err }}</div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <div v-if="loading" class="empty">加载中…</div>
+      <div v-else-if="items.length === 0" class="empty">没有找到符合条件的歌曲</div>
+      <div v-else class="song-list">
+        <div class="song" v-for="(s, i) in items" :key="s.id">
+          <div class="song-rank">{{ (page - 1) * size + i + 1 }}</div>
+          <div class="song-main">
+            <div class="song-name">{{ s.music_name }}</div>
+            <div class="song-meta">{{ s.singer }} · {{ s.album || '未知专辑' }} · 播放 {{ s.play_count }}</div>
+          </div>
+          <span class="tag">{{ s.style_tag }}</span>
+          <button class="btn small primary" @click="play(s)">播放</button>
+          <button class="btn small" @click="fav(s)">{{ favIds.includes(s.id) ? '已收藏' : '收藏' }}</button>
+          <button class="btn small ghost" @click="detail(s)">详情</button>
+        </div>
+      </div>
+
+      <div class="row" style="justify-content:center;margin-top:14px">
+        <button class="btn small" :disabled="page <= 1" @click="search(page - 1)">上一页</button>
+        <span class="song-meta">第 {{ page }} / {{ maxPage }} 页</span>
+        <button class="btn small" :disabled="page >= maxPage" @click="search(page + 1)">下一页</button>
+      </div>
+    </div>
+
+    <!-- 详情弹层 -->
+    <div v-if="current" class="card" style="margin-top:16px">
+      <div class="row">
+        <h2>歌曲详情</h2>
+        <div class="spacer"></div>
+        <button class="btn small" @click="current = null">关闭</button>
+      </div>
+      <table>
+        <tr><th style="width:110px">歌名</th><td>{{ current.music_name }}</td></tr>
+        <tr><th>歌手</th><td>{{ current.singer }}</td></tr>
+        <tr><th>专辑</th><td>{{ current.album || '—' }}</td></tr>
+        <tr><th>风格</th><td>{{ current.style_tag }}</td></tr>
+        <tr><th>时长</th><td>{{ Number(current.duration).toFixed(1) }} 秒</td></tr>
+        <tr><th>播放次数</th><td>{{ current.play_count }}</td></tr>
+        <tr><th>曲目描述</th><td>{{ current.description || '—' }}</td></tr>
+        <tr><th>歌词</th><td>{{ current.lyric || '（本数据集未提供歌词，文本模态使用元数据与标签）' }}</td></tr>
+      </table>
+    </div>
+  </main>
+</div>
+
+<script type="module">
+import { createApp } from "/assets/vue.esm-browser.prod.js";
+import { api, requireLogin, getUser, clearSession } from "/assets/api.js";
+import { initPlayer, playSong } from "/assets/player.js";
+
+createApp({
+  data() {
+    return {
+      user: getUser() || {},
+      items: [], total: 0, page: 1, size: 20,
+      keyword: "", genre: "",
+      genres: [], favIds: [], current: null,
+      loading: false, err: "",
+    };
+  },
+  computed: {
+    isAdmin() { return this.user.role === "admin"; },
+    maxPage() { return Math.max(1, Math.ceil(this.total / this.size)); },
+  },
+  methods: {
+    async search(page) {
+      this.loading = true;
+      this.err = "";
+      try {
+        const res = await api.musicList({ keyword: this.keyword, genre: this.genre, page, size: this.size });
+        this.items = res.items;
+        this.total = res.total;
+        this.page = res.page;
+      } catch (e) {
+        this.err = e.message;
+      } finally {
+        this.loading = false;
+      }
+    },
+    reset() {
+      this.keyword = "";
+      this.genre = "";
+      this.search(1);
+    },
+    play(song) { playSong(song, { fromRecommend: false }); },
+    async fav(song) {
+      if (this.favIds.includes(song.id)) return;
+      await api.favorite(song.id);
+      this.favIds.push(song.id);
+    },
+    async detail(song) {
+      this.current = await api.musicDetail(song.id);
+    },
+    logout() { clearSession(); location.href = "/login"; },
+  },
+  async mounted() {
+    if (!requireLogin()) return;
+    initPlayer();
+    const [, genres, favs] = await Promise.all([this.search(1), api.genres(), api.favorites()]);
+    this.genres = genres.items;
+    this.favIds = (favs.items || []).map((x) => x.music_id);
+  },
+}).mount("#app");
+</script>
+</body>
+</html>

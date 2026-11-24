@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登录 · 多模态音乐推荐</title>
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+<div class="auth-wrap">
+  <div class="auth-card">
+    <h1>多模态音乐推荐系统</h1>
+    <div class="sub">音频 · 文本 · 行为 三模态自适应融合</div>
+
+    <div class="row" style="margin-bottom:16px">
+      <button class="btn primary" id="tab-login">登录</button>
+      <button class="btn" id="tab-register">注册</button>
+    </div>
+
+    <div class="field">
+      <label>用户名</label>
+      <input id="username" placeholder="3 位以上，如 demo1" autocomplete="username">
+    </div>
+    <div class="field" id="nickname-field" style="display:none">
+      <label>昵称</label>
+      <input id="nickname" placeholder="展示用的名字">
+    </div>
+    <div class="field">
+      <label>密码</label>
+      <input id="password" type="password" placeholder="6 位以上" autocomplete="current-password">
+    </div>
+
+    <div class="notice" id="msg" style="display:none"></div>
+
+    <button class="btn primary" id="submit" style="width:100%;margin-top:14px;min-height:40px">登录</button>
+
+    <div class="hint">
+      演示账号：demo1 / demo2 / demo3，密码 123456（分别偏好流行、电子，以及一个没有历史的新用户）<br>
+      管理员：admin / 123456
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { api, setSession } from "/assets/api.js";
+
+let mode = "login";
+
+const $ = (id) => document.getElementById(id);
+const msg = $("msg");
+
+function showMsg(text) {
+  msg.textContent = text;
+  msg.style.display = text ? "block" : "none";
+}
+
+function switchMode(next) {
+  mode = next;
+  $("tab-login").className = "btn" + (next === "login" ? " primary" : "");
+  $("tab-register").className = "btn" + (next === "register" ? " primary" : "");
+  $("nickname-field").style.display = next === "register" ? "block" : "none";
+  $("submit").textContent = next === "login" ? "登录" : "注册并登录";
+  showMsg("");
+}
+
+$("tab-login").onclick = () => switchMode("login");
+$("tab-register").onclick = () => switchMode("register");
+
+$("submit").onclick = async () => {
+  const username = $("username").value.trim();
+  const password = $("password").value;
+  if (!username || !password) return showMsg("请填写用户名和密码");
+  $("submit").disabled = true;
+  try {
+    const data = mode === "login"
+      ? await api.login(username, password)
+      : await api.register(username, password, $("nickname").value.trim());
+    setSession(data.token, data.user);
+    location.href = "/";
+  } catch (err) {
+    showMsg(err.message);
+  } finally {
+    $("submit").disabled = false;
+  }
+};
+
+$("password").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") $("submit").click();
+});
+</script>
+</body>
+</html>

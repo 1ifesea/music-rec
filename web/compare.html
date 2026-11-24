@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>权重对比 · 多模态音乐推荐</title>
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/assets/app.css">
+<style>[v-cloak]{display:none}</style>
+</head>
+<body>
+<div id="app" v-cloak>
+  <header class="topbar">
+    <div class="brand"><span class="brand-dot"></span>多模态音乐推荐</div>
+    <nav class="nav">
+      <a href="/">首页</a>
+      <a href="/library">音乐库</a>
+      <a href="/mine">我的</a>
+      <a href="/compare" class="active">权重对比</a>
+      <a v-if="isAdmin" href="/admin">后台</a>
+    </nav>
+    <div class="spacer"></div>
+    <span class="user-chip">{{ user.nickname }}</span>
+    <button class="btn small" @click="logout">退出</button>
+  </header>
+
+  <main class="page">
+    <div class="section-title">同一用户下的两组推荐</div>
+    <div class="card">
+      <div class="sub" style="margin:0">
+        左边是本系统的「门控自适应权重」，右边是传统做法「三模态固定等权」。
+        两组的输入、歌曲库、候选集完全相同，只有权重来源不同——
+        这是本项目最直接的一个对照实验。
+      </div>
+      <div class="row" style="margin-top:12px">
+        <div class="metric"><span>两组重合歌曲</span><b>{{ overlap }}</b></div>
+        <div class="metric"><span>推荐数量</span><b>10</b></div>
+        <button class="btn primary" @click="load">重新对比</button>
+      </div>
+    </div>
+
+    <div class="grid two" style="margin-top:16px">
+      <div class="card">
+        <h2>自适应权重（本系统）</h2>
+        <div class="sub">权重由门控网络按你的历史行为算出</div>
+        <div class="weight-bar">
+          <div class="label"><span>音频</span><b>{{ pct(data.adaptive?.weights.audio) }}</b></div>
+          <div class="track"><i class="fill-audio" :style="{width: pct(data.adaptive?.weights.audio)}"></i></div>
+        </div>
+        <div class="weight-bar">
+          <div class="label"><span>文本</span><b>{{ pct(data.adaptive?.weights.text) }}</b></div>
+          <div class="track"><i class="fill-text" :style="{width: pct(data.adaptive?.weights.text)}"></i></div>
+        </div>
+        <div class="weight-bar">
+          <div class="label"><span>行为</span><b>{{ pct(data.adaptive?.weights.behavior) }}</b></div>
+          <div class="track"><i class="fill-behavior" :style="{width: pct(data.adaptive?.weights.behavior)}"></i></div>
+        </div>
+
+        <div class="song-list" style="margin-top:12px">
+          <div class="song" v-for="(s, i) in data.adaptive?.items" :key="s.music_id">
+            <div class="song-rank">{{ i + 1 }}</div>
+            <div class="song-main">
+              <div class="song-name">{{ s.music_name }}</div>
+              <div class="song-meta">{{ s.singer }} · {{ s.style_tag }}</div>
+            </div>
+            <button class="btn small primary" @click="play(s, i)">播放</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>固定等权（对照组）</h2>
+        <div class="sub">三路各 33.3%，不随用户变化</div>
+        <div class="weight-bar">
+          <div class="label"><span>音频</span><b>33.3%</b></div>
+          <div class="track"><i class="fill-audio" style="width:33.3%"></i></div>
+        </div>
+        <div class="weight-bar">
+          <div class="label"><span>文本</span><b>33.3%</b></div>
+          <div class="track"><i class="fill-text" style="width:33.3%"></i></div>
+        </div>
+        <div class="weight-bar">
+          <div class="label"><span>行为</span><b>33.3%</b></div>
+          <div class="track"><i class="fill-behavior" style="width:33.3%"></i></div>
+        </div>
+
+        <div class="song-list" style="margin-top:12px">
+          <div class="song" v-for="(s, i) in data.fixed?.items" :key="s.music_id">
+            <div class="song-rank">{{ i + 1 }}</div>
+            <div class="song-main">
+              <div class="song-name">{{ s.music_name }}</div>
+              <div class="song-meta">{{ s.singer }} · {{ s.style_tag }}</div>
+            </div>
+            <button class="btn small" @click="play(s, i)">播放</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <h2>怎么读这张对照</h2>
+      <div class="sub" style="margin-bottom:8px">
+        权重不同 → 排序依据不同 → 前 10 首的构成不同。重合越少，说明权重差异越实质。
+      </div>
+      <div class="song-meta">
+        离线指标上，自适应权重在 HR@10 / NDCG@10 上相对固定等权的提升，见首页「离线评估」卡片。
+        换一个用户再刷新本页，会看到权重与列表都跟着变——这正是「模型自适应学习权重」与「人工设权重」的区别。
+      </div>
+    </div>
+  </main>
+</div>
+
+<script type="module">
+import { createApp } from "/assets/vue.esm-browser.prod.js";
+import { api, requireLogin, getUser, clearSession } from "/assets/api.js";
+import { initPlayer, playSong } from "/assets/player.js";
+
+createApp({
+  data() {
+    return { user: getUser() || {}, data: { adaptive: null, fixed: null, overlap: 0 } };
+  },
+  computed: { isAdmin() { return this.user.role === "admin"; } },
+  methods: {
+    pct(w) { return ((w || 0) * 100).toFixed(1) + "%"; },
+    async load() {
+      try { this.data = await api.compare(10); } catch (e) { alert(e.message); }
+    },
+    play(song, i) { playSong(song, { fromRecommend: true, position: i + 1, reqId: "compare" }); },
+    logout() { clearSession(); location.href = "/login"; },
+  },
+  async mounted() {
+    if (!requireLogin()) return;
+    initPlayer();
+    await this.load();
+  },
+}).mount("#app");
+</script>
+</body>
+</html>

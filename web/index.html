@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>首页 · 多模态音乐推荐</title>
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/assets/app.css">
+<style>[v-cloak]{display:none}</style>
+</head>
+<body>
+<div id="app" v-cloak>
+  <header class="topbar">
+    <div class="brand"><span class="brand-dot"></span>多模态音乐推荐</div>
+    <nav class="nav">
+      <a href="/" class="active">首页</a>
+      <a href="/library">音乐库</a>
+      <a href="/mine">我的</a>
+      <a href="/compare">权重对比</a>
+      <a v-if="isAdmin" href="/admin">后台</a>
+    </nav>
+    <div class="spacer"></div>
+    <span class="user-chip">{{ user.nickname }}</span>
+    <button class="btn small" @click="logout">退出</button>
+  </header>
+
+  <main class="page">
+    <div v-if="err" class="notice">{{ err }}</div>
+
+    <div class="grid two" style="margin-top:6px">
+      <!-- 三模态权重 -->
+      <div class="card">
+        <h2>本次推荐的三模态权重</h2>
+        <div class="sub">由门控网络依据你的历史行为实时计算，不同用户权重不同</div>
+
+        <div class="weight-bar">
+          <div class="label"><span>音频模态（MFCC 音色特征）</span><b>{{ pct(rec?.weights.audio) }}</b></div>
+          <div class="track"><i class="fill-audio" :style="{width: pct(rec?.weights.audio)}"></i></div>
+        </div>
+        <div class="weight-bar">
+          <div class="label"><span>文本模态（元数据与标签）</span><b>{{ pct(rec?.weights.text) }}</b></div>
+          <div class="track"><i class="fill-text" :style="{width: pct(rec?.weights.text)}"></i></div>
+        </div>
+        <div class="weight-bar">
+          <div class="label"><span>行为模态（你的收听序列）</span><b>{{ pct(rec?.weights.behavior) }}</b></div>
+          <div class="track"><i class="fill-behavior" :style="{width: pct(rec?.weights.behavior)}"></i></div>
+        </div>
+
+        <div class="row" style="margin-top:12px">
+          <div class="metric"><span>行为活跃度</span><b>{{ (rec?.activity ?? 0).toFixed(2) }}</b></div>
+          <div class="metric"><span>推荐模式</span><b style="font-size:15px">{{ modeText }}</b></div>
+        </div>
+        <div v-if="rec?.notice" class="notice" style="margin-top:12px">{{ rec.notice }}</div>
+      </div>
+
+      <!-- 离线评估 -->
+      <div class="card">
+        <h2>离线评估（留一法）</h2>
+        <div class="sub">自适应权重 vs 固定等权，同一训练集同一测试集的对比</div>
+        <div v-if="metrics && metrics.ready">
+          <table>
+            <thead><tr><th>指标</th><th>自适应</th><th>固定等权</th></tr></thead>
+            <tbody>
+              <tr><td>HR@10</td><td><b>{{ metrics.adaptive['HR@10'] }}</b></td><td>{{ metrics.fixed['HR@10'] }}</td></tr>
+              <tr><td>NDCG@10</td><td><b>{{ metrics.adaptive['NDCG@10'] }}</b></td><td>{{ metrics.fixed['NDCG@10'] }}</td></tr>
+              <tr><td>平均权重</td>
+                <td>{{ wtext(metrics.adaptive.mean_weights) }}</td>
+                <td>{{ wtext(metrics.fixed.mean_weights) }}</td></tr>
+            </tbody>
+          </table>
+          <div class="song-meta" style="margin-top:10px">
+            训练用户 {{ metrics.n_users }} 人 · 歌曲 {{ metrics.n_items }} 首 · 训练轮次 {{ metrics.epochs }}
+          </div>
+          <div class="notice" style="margin-top:10px">
+            交互数据由「风格偏好画像」模拟生成，用于课程演示，非真实用户行为。
+          </div>
+        </div>
+        <div v-else class="empty">{{ metrics?.notice || '正在读取评估结果…' }}</div>
+      </div>
+    </div>
+
+    <div class="section-title">
+      为你推荐
+      <button class="btn small" @click="load" style="margin-left:auto">刷新</button>
+      <a class="btn small" href="/compare">看权重对比</a>
+    </div>
+
+    <div class="card">
+      <div v-if="loading" class="empty">正在计算推荐…</div>
+      <div v-else-if="!rec || rec.items.length === 0" class="empty">暂无推荐，先去音乐库听几首吧</div>
+      <div v-else class="song-list">
+        <div class="song" v-for="(s, i) in rec.items" :key="s.music_id">
+          <div class="song-rank">{{ i + 1 }}</div>
+          <div class="song-main">
+            <div class="song-name">{{ s.music_name }}</div>
+            <div class="song-meta">{{ s.singer }} · {{ s.album || '未知专辑' }}</div>
+          </div>
+          <span class="tag">{{ s.style_tag }}</span>
+          <span class="score">score {{ s.score }}</span>
+          <button class="btn small primary" @click="play(s, i)">播放</button>
+          <button class="btn small" @click="fav(s)">{{ favIds.includes(s.music_id) ? '已收藏' : '收藏' }}</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="song-meta" style="margin-top:12px">
+      提示：点击「播放」会同时写入一条播放历史与一次推荐点击，推荐结果下次会随之变化。
+    </div>
+  </main>
+</div>
+
+<script type="module">
+import { createApp } from "/assets/vue.esm-browser.prod.js";
+import { api, requireLogin, getUser, clearSession } from "/assets/api.js";
+import { initPlayer, playSong } from "/assets/player.js";
+
+createApp({
+  data() {
+    return {
+      user: getUser() || {},
+      rec: null,
+      metrics: null,
+      favIds: [],
+      loading: true,
+      err: "",
+    };
+  },
+  computed: {
+    isAdmin() { return this.user.role === "admin"; },
+    modeText() { return this.rec?.mode === "adaptive" ? "自适应权重" : (this.rec?.mode === "fixed" ? "固定等权" : "热度降级"); },
+  },
+  methods: {
+    pct(w) { return ((w || 0) * 100).toFixed(1) + "%"; },
+    wtext(arr) {
+      if (!arr) return "—";
+      return arr.map((v) => (v * 100).toFixed(0) + "%").join(" / ");
+    },
+    async load() {
+      this.loading = true;
+      try {
+        const [rec, favs] = await Promise.all([api.recommend(10), api.favorites()]);
+        this.rec = rec;
+        this.favIds = (favs.items || []).map((x) => x.music_id);
+      } catch (e) {
+        this.err = e.message;
+      } finally {
+        this.loading = false;
+      }
+    },
+    play(song, index) {
+      playSong(song, { fromRecommend: true, position: index + 1, reqId: "home" });
+    },
+    async fav(song) {
+      if (this.favIds.includes(song.music_id)) return;
+      await api.favorite(song.music_id);
+      this.favIds.push(song.music_id);
+    },
+    logout() { clearSession(); location.href = "/login"; },
+  },
+  async mounted() {
+    if (!requireLogin()) return;
+    initPlayer();
+    await this.load();
+    try { this.metrics = await api.metrics(); } catch (e) { this.metrics = { ready: false, notice: e.message }; }
+  },
+}).mount("#app");
+</script>
+</body>
+</html>

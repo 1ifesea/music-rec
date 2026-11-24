@@ -1,0 +1,21 @@
+# 统一换行，避免 Windows 上子文件互相污染
+* text=auto
+
+# 脚本与文档保持各自习惯：PowerShell 在 Windows 上用 CRLF，其余用 LF
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.py text eol=lf
+*.js text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+
+# 二进制，不做换行转换
+*.png binary
+*.jpg binary
+*.wav binary
+*.pt binary
+*.npz binary
+*.joblib binary

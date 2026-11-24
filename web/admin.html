@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>后台管理 · 多模态音乐推荐</title>
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/assets/app.css">
+<style>[v-cloak]{display:none}</style>
+</head>
+<body>
+<div id="app" v-cloak>
+  <header class="topbar">
+    <div class="brand"><span class="brand-dot"></span>多模态音乐推荐</div>
+    <nav class="nav">
+      <a href="/">首页</a>
+      <a href="/library">音乐库</a>
+      <a href="/mine">我的</a>
+      <a href="/compare">权重对比</a>
+      <a href="/admin" class="active">后台</a>
+    </nav>
+    <div class="spacer"></div>
+    <span class="user-chip">{{ user.nickname }}</span>
+    <button class="btn small" @click="logout">退出</button>
+  </header>
+
+  <main class="page">
+    <div v-if="!isAdmin" class="notice">当前账号不是管理员，请用 admin / 123456 登录后再访问本页。</div>
+
+    <template v-else>
+      <div class="section-title">
+        系统概览
+        <button class="btn small" style="margin-left:auto" @click="load">刷新</button>
+      </div>
+      <div class="grid two">
+        <div class="card">
+          <h2>数据规模</h2>
+          <div class="row" style="margin-top:8px">
+            <div class="metric"><span>歌曲</span><b>{{ ov.music }}</b></div>
+            <div class="metric"><span>已提特征</span><b>{{ ov.features }}</b></div>
+            <div class="metric"><span>播放记录</span><b>{{ ov.plays }}</b></div>
+            <div class="metric"><span>收藏</span><b>{{ ov.favorites }}</b></div>
+            <div class="metric"><span>推荐点击</span><b>{{ ov.clicks }}</b></div>
+          </div>
+        </div>
+        <div class="card">
+          <h2>模型与账号</h2>
+          <div class="row" style="margin-top:8px">
+            <div class="metric"><span>真实账号</span><b>{{ ov.users }}</b></div>
+            <div class="metric"><span>模拟用户</span><b>{{ ov.sim_users }}</b></div>
+            <div class="metric"><span>模型状态</span><b style="font-size:15px">{{ ov.model_ready ? '已加载' : '未就绪' }}</b></div>
+          </div>
+          <div v-if="!ov.model_ready" class="notice" style="margin-top:12px">{{ ov.model_notice }}</div>
+          <button class="btn" style="margin-top:12px" @click="reload">热加载模型</button>
+        </div>
+      </div>
+
+      <div class="section-title">
+        {{ editingId ? '编辑歌曲 #' + editingId : '新增歌曲' }}
+      </div>
+      <div class="card">
+        <div class="row">
+          <input v-model="form.music_name" placeholder="歌名（必填）" style="flex:1 1 200px">
+          <input v-model="form.singer" placeholder="歌手" style="flex:1 1 140px">
+          <input v-model="form.album" placeholder="专辑" style="flex:1 1 140px">
+          <select v-model="form.style_tag" style="flex:0 1 130px">
+            <option value="">选择风格</option>
+            <option v-for="g in genres" :key="g.tag" :value="g.tag">{{ g.tag }}</option>
+          </select>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <input v-model="form.audio_path" placeholder="音频路径，如 data/audio/0001.wav" style="flex:2 1 300px">
+          <input v-model.number="form.duration" placeholder="时长（秒）" style="flex:0 1 120px">
+        </div>
+        <div style="margin-top:10px">
+          <textarea v-model="form.description" rows="2" placeholder="曲目描述（会进入文本模态）"
+                    style="width:100%;resize:vertical"></textarea>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <button class="btn primary" @click="save">{{ editingId ? '保存修改' : '新增歌曲' }}</button>
+          <button class="btn" @click="resetForm">清空</button>
+          <span class="song-meta">{{ formMsg }}</span>
+        </div>
+        <div v-if="noticeText" class="notice" style="margin-top:12px">{{ noticeText }}</div>
+      </div>
+
+      <div class="section-title">歌曲管理（最近 300 首）</div>
+      <div class="card">
+        <div v-if="songs.length === 0" class="empty">暂无数据</div>
+        <table v-else>
+          <thead>
+            <tr><th style="width:60px">ID</th><th>歌名</th><th>歌手</th><th>风格</th>
+                <th style="width:80px">播放</th><th style="width:130px">操作</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="s in songs" :key="s.id">
+              <td>{{ s.id }}</td>
+              <td>{{ s.music_name }}</td>
+              <td>{{ s.singer }}</td>
+              <td><span class="tag">{{ s.style_tag }}</span></td>
+              <td>{{ s.play_count }}</td>
+              <td>
+                <button class="btn small" @click="edit(s)">编辑</button>
+                <button class="btn small danger" @click="remove(s)">删除</button>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="section-title">账号列表（不含模拟用户）</div>
+      <div class="card">
+        <table>
+          <thead><tr><th style="width:60px">ID</th><th>用户名</th><th>昵称</th><th>角色</th><th>播放次数</th><th>注册时间</th></tr></thead>
+          <tbody>
+            <tr v-for="u in users" :key="u.id">
+              <td>{{ u.id }}</td>
+              <td>{{ u.username }}</td>
+              <td>{{ u.nickname }}</td>
+              <td>{{ u.role }}</td>
+              <td>{{ u.plays }}</td>
+              <td class="song-meta">{{ u.create_time }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </template>
+  </main>
+</div>
+
+<script type="module">
+import { createApp } from "/assets/vue.esm-browser.prod.js";
+import { api, requireLogin, getUser, clearSession } from "/assets/api.js";
+
+const emptyForm = () => ({
+  music_name: "", singer: "", album: "", style_tag: "",
+  description: "", lyric: "", audio_path: "", duration: 0,
+});
+
+createApp({
+  data() {
+    return {
+      user: getUser() || {},
+      ov: { music: 0, features: 0, plays: 0, favorites: 0, clicks: 0, users: 0, sim_users: 0, model_ready: false },
+      songs: [], users: [], genres: [],
+      form: emptyForm(), editingId: null,
+      formMsg: "", noticeText: "",
+    };
+  },
+  computed: { isAdmin() { return this.user.role === "admin"; } },
+  methods: {
+    async load() {
+      if (!this.isAdmin) return;
+      const [ov, songs, users, genres] = await Promise.all([
+        api.overview(), api.adminMusic(), api.adminUsers(), api.genres(),
+      ]);
+      this.ov = ov;
+      this.songs = songs.items;
+      this.users = users.items;
+      this.genres = genres.items;
+    },
+    resetForm() {
+      this.form = emptyForm();
+      this.editingId = null;
+      this.formMsg = "";
+    },
+    edit(song) {
+      this.editingId = song.id;
+      this.form = { ...emptyForm(), ...song };
+      this.formMsg = "";
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    },
+    async save() {
+      if (!this.form.music_name.trim()) {
+        this.formMsg = "歌名不能为空";
+        return;
+      }
+      try {
+        const res = this.editingId
+          ? await api.updateMusic(this.editingId, this.form)
+          : await api.createMusic(this.form);
+        this.noticeText = res.notice || "";
+        this.formMsg = this.editingId ? "已保存" : "已新增";
+        this.resetFormKeepMsg();
+        await this.load();
+      } catch (e) {
+        this.formMsg = e.message;
+      }
+    },
+    resetFormKeepMsg() {
+      const msg = this.formMsg;
+      this.form = emptyForm();
+      this.editingId = null;
+      this.formMsg = msg;
+    },
+    async remove(song) {
+      if (!confirm(`确认删除《${song.music_name}》？`)) return;
+      const res = await api.deleteMusic(song.id);
+      this.noticeText = res.notice || "";
+      await this.load();
+    },
+    async reload() {
+      const res = await api.reloadModel();
+      this.noticeText = res.ok ? "模型已重新加载" : (res.notice || "加载失败");
+      await this.load();
+    },
+    logout() { clearSession(); location.href = "/login"; },
+  },
+  async mounted() {
+    if (!requireLogin()) return;
+    await this.load();
+  },
+}).mount("#app");
+</script>
+</body>
+</html>

@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>我的 · 多模态音乐推荐</title>
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/assets/app.css">
+<style>[v-cloak]{display:none}</style>
+</head>
+<body>
+<div id="app" v-cloak>
+  <header class="topbar">
+    <div class="brand"><span class="brand-dot"></span>多模态音乐推荐</div>
+    <nav class="nav">
+      <a href="/">首页</a>
+      <a href="/library">音乐库</a>
+      <a href="/mine" class="active">我的</a>
+      <a href="/compare">权重对比</a>
+      <a v-if="isAdmin" href="/admin">后台</a>
+    </nav>
+    <div class="spacer"></div>
+    <span class="user-chip">{{ user.nickname }}</span>
+    <button class="btn small" @click="logout">退出</button>
+  </header>
+
+  <main class="page">
+    <div class="section-title">我的听歌画像</div>
+    <div class="grid two">
+      <div class="card">
+        <h2>基础统计</h2>
+        <div class="sub">这些数据就是「行为模态」的输入</div>
+        <div class="row" style="margin-top:8px">
+          <div class="metric"><span>播放次数</span><b>{{ stats.play_count }}</b></div>
+          <div class="metric"><span>收藏歌曲</span><b>{{ stats.favorite_count }}</b></div>
+        </div>
+        <div style="margin-top:12px">
+          <div class="song-meta" style="margin-bottom:6px">最常听的风格</div>
+          <div class="row">
+            <span class="tag" v-for="g in stats.top_genres" :key="g.tag">{{ g.tag }} · {{ g.c }}</span>
+            <span v-if="!stats.top_genres || stats.top_genres.length === 0" class="song-meta">还没有播放记录</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>账号信息</h2>
+        <div class="sub">改个昵称试试，刷新页面后仍然生效</div>
+        <div class="row">
+          <input v-model="nickname" style="flex:1 1 200px" placeholder="昵称">
+          <button class="btn primary" @click="saveNickname">保存</button>
+        </div>
+        <div v-if="saveMsg" class="notice" style="margin-top:12px">{{ saveMsg }}</div>
+        <div class="song-meta" style="margin-top:12px">
+          用户 ID：{{ user.id }} · 角色：{{ user.role === 'admin' ? '管理员' : '普通用户' }}
+        </div>
+      </div>
+    </div>
+
+    <div class="section-title">
+      我的收藏（{{ favs.length }}）
+    </div>
+    <div class="card">
+      <div v-if="favs.length === 0" class="empty">还没有收藏，去音乐库挑几首</div>
+      <div v-else class="song-list">
+        <div class="song" v-for="(s, i) in favs" :key="s.music_id">
+          <div class="song-rank">{{ i + 1 }}</div>
+          <div class="song-main">
+            <div class="song-name">{{ s.music_name }}</div>
+            <div class="song-meta">{{ s.singer }} · 收藏于 {{ s.collect_time }}</div>
+          </div>
+          <span class="tag">{{ s.style_tag }}</span>
+          <button class="btn small primary" @click="play(s)">播放</button>
+          <button class="btn small danger" @click="removeFav(s, i)">取消收藏</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-title">最近播放</div>
+    <div class="card">
+      <div v-if="history.length === 0" class="empty">还没有播放记录</div>
+      <table v-else>
+        <thead><tr><th>歌名</th><th>歌手</th><th>风格</th><th>时间</th><th></th></tr></thead>
+        <tbody>
+          <tr v-for="h in history" :key="h.id">
+            <td>{{ h.music_name }}</td>
+            <td>{{ h.singer }}</td>
+            <td>{{ h.style_tag }}</td>
+            <td class="song-meta">{{ h.play_time }}</td>
+            <td><button class="btn small" @click="play(h)">再听一次</button></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </main>
+</div>
+
+<script type="module">
+import { createApp } from "/assets/vue.esm-browser.prod.js";
+import { api, requireLogin, getUser, clearSession, setSession, getToken } from "/assets/api.js";
+import { initPlayer, playSong } from "/assets/player.js";
+
+createApp({
+  data() {
+    return {
+      user: getUser() || {},
+      stats: { play_count: 0, favorite_count: 0, top_genres: [] },
+      favs: [], history: [],
+      nickname: (getUser() || {}).nickname || "",
+      saveMsg: "",
+    };
+  },
+  computed: { isAdmin() { return this.user.role === "admin"; } },
+  methods: {
+    play(song) { playSong(song, { fromRecommend: false }); },
+    async removeFav(song, index) {
+      await api.unfavorite(song.music_id);
+      this.favs.splice(index, 1);
+      this.stats.favorite_count = this.favs.length;
+    },
+    async saveNickname() {
+      try {
+        const res = await api.updateProfile(this.nickname);
+        this.user = { ...this.user, nickname: res.nickname };
+        setSession(getToken(), this.user);
+        this.saveMsg = "昵称已更新";
+      } catch (e) {
+        this.saveMsg = e.message;
+      }
+    },
+    logout() { clearSession(); location.href = "/login"; },
+  },
+  async mounted() {
+    if (!requireLogin()) return;
+    initPlayer();
+    const [stats, favs, history] = await Promise.all([
+      api.behaviorStats(), api.favorites(), api.history(60),
+    ]);
+    this.stats = stats;
+    this.favs = favs.items;
+    this.history = history.items;
+  },
+}).mount("#app");
+</script>
+</body>
+</html>
